@@ -1,0 +1,6 @@
+{
+  "name": "Neon Arcanoid",
+  "description": "Juego arcade de romper ladrillos estilo Arkanoid controlado con el acelerómetro del dispositivo e increíbles efectos de color de neón.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
