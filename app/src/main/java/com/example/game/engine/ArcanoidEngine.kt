@@ -3,7 +3,9 @@ package com.example.game.engine
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.example.game.audio.HapticSoundHelper
@@ -55,18 +57,18 @@ class ArcanoidEngine(
     val particles = mutableListOf<Particle>()
     val floatingTexts = mutableListOf<FloatingText>()
 
-    var score: Int = 0
+    var score by mutableIntStateOf(0)
         private set
-    var highScore: Int = prefs.getInt("high_score", 0)
+    var highScore by mutableIntStateOf(prefs.getInt("high_score", 0))
         private set
-    var lives: Int = 3
+    var lives by mutableIntStateOf(3)
         private set
-    var level: Int = 1
+    var level by mutableIntStateOf(1)
         private set
-    var combo: Int = 0
+    var combo by mutableIntStateOf(0)
         private set
 
-    var bottomShieldActive: Boolean = false
+    var bottomShieldActive by mutableStateOf(false)
         private set
 
     private var widePaddleTimer: Float = 0f

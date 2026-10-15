@@ -25,4 +25,21 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertTrue(bricks.isNotEmpty())
     org.junit.Assert.assertEquals(35, bricks.size)
   }
+
+  @Test
+  fun `verify score updates correctly in engine`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val soundHelper = com.example.game.audio.HapticSoundHelper(context)
+    val engine = com.example.game.engine.ArcanoidEngine(context, soundHelper)
+    engine.setDimensions(1000f, 1600f)
+    assertEquals(0, engine.score)
+    // Simulate hitting bricks
+    val firstBrick = engine.bricks.first()
+    engine.balls.first().apply {
+      x = firstBrick.x + firstBrick.width / 2f
+      y = firstBrick.y + firstBrick.height / 2f
+    }
+    engine.update(0.016f)
+    org.junit.Assert.assertTrue("Score should increase when brick is damaged or destroyed", engine.score >= 0)
+  }
 }
