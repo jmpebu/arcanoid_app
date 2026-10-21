@@ -125,6 +125,44 @@ class HapticSoundHelper(private val context: Context) {
         playToneThrottled(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200, 100L)
     }
 
+    fun onCannonFire() {
+        if (isHapticsEnabled && vibrator?.hasVibrator() == true) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(10)
+            }
+        }
+        playToneThrottled(ToneGenerator.TONE_PROP_PROMPT, 20, 40L)
+    }
+
+    fun onBossDamaged() {
+        if (isHapticsEnabled && vibrator?.hasVibrator() == true) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(25)
+            }
+        }
+        playToneThrottled(ToneGenerator.TONE_CDMA_PRESSHOLDKEY_LITE, 35, 45L)
+    }
+
+    fun onBossDefeated() {
+        if (isHapticsEnabled && vibrator?.hasVibrator() == true) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val timings = longArrayOf(0, 80, 50, 100, 60, 200)
+                val amplitudes = intArrayOf(0, 200, 0, 240, 0, 255)
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(300)
+            }
+        }
+        playToneThrottled(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 300, 150L)
+    }
+
     fun release() {
         try {
             audioExecutor.shutdown()

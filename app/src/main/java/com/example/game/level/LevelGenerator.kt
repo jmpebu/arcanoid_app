@@ -1,6 +1,7 @@
 package com.example.game.level
 
 import androidx.compose.ui.graphics.Color
+import com.example.game.model.Boss
 import com.example.game.model.Brick
 import com.example.game.model.BrickType
 import com.example.ui.theme.NeonCyan
@@ -9,27 +10,91 @@ import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.NeonOrange
 import com.example.ui.theme.NeonPink
 import com.example.ui.theme.NeonPurple
+import com.example.ui.theme.NeonRed
 import com.example.ui.theme.NeonYellow
 import kotlin.random.Random
 
 object LevelGenerator {
 
+    fun generateBoss(levelNumber: Int, playAreaWidth: Float, playAreaHeight: Float): Boss {
+        val bossY = playAreaHeight * 0.08f
+        return when (levelNumber) {
+            1 -> Boss(
+                id = 1,
+                name = "NEXUS-V",
+                subtitle = "Núcleo Corrupto del Firewall",
+                x = playAreaWidth / 2f,
+                y = bossY,
+                width = (playAreaWidth * 0.32f).coerceIn(110f, 200f),
+                height = 48f,
+                maxHp = 35,
+                currentHp = 35,
+                vx = 110f,
+                attackInterval = 2.8f,
+                color = NeonRed
+            )
+            2 -> Boss(
+                id = 2,
+                name = "OVERLORD-KRNL",
+                subtitle = "Centinela Cuántico Autónomo",
+                x = playAreaWidth / 2f,
+                y = bossY,
+                width = (playAreaWidth * 0.38f).coerceIn(130f, 230f),
+                height = 54f,
+                maxHp = 65,
+                currentHp = 65,
+                vx = 135f,
+                attackInterval = 2.2f,
+                color = NeonPurple
+            )
+            3 -> Boss(
+                id = 3,
+                name = "ZERO-NEURAL",
+                subtitle = "Singularidad Cibernética Rogue",
+                x = playAreaWidth / 2f,
+                y = bossY,
+                width = (playAreaWidth * 0.44f).coerceIn(150f, 260f),
+                height = 60f,
+                maxHp = 100,
+                currentHp = 100,
+                vx = 160f,
+                attackInterval = 1.7f,
+                color = NeonOrange
+            )
+            else -> Boss(
+                id = levelNumber,
+                name = "LEVIATHAN-${levelNumber * 7}",
+                subtitle = "Megared Hostil Sector $levelNumber",
+                x = playAreaWidth / 2f,
+                y = bossY,
+                width = (playAreaWidth * 0.42f).coerceIn(140f, 250f),
+                height = 56f,
+                maxHp = 70 + (levelNumber * 25),
+                currentHp = 70 + (levelNumber * 25),
+                vx = 130f + (levelNumber * 8f),
+                attackInterval = (2.2f - (levelNumber * 0.1f)).coerceAtLeast(1.2f),
+                color = NeonRed
+            )
+        }
+    }
+
     fun generateLevel(levelNumber: Int, playAreaWidth: Float, playAreaHeight: Float): List<Brick> {
         val bricks = mutableListOf<Brick>()
-        val topMargin = playAreaHeight * 0.08f
+        // Leave room at the top for the boss
+        val topMargin = playAreaHeight * 0.17f
         val sideMargin = playAreaWidth * 0.04f
         val usableWidth = playAreaWidth - (sideMargin * 2f)
 
         when (levelNumber) {
             1 -> {
-                // Classic Neon Rainbow - 5 rows, 7 columns
-                val rows = 5
-                val cols = 7
+                // Firewall Grid - 4 rows, 6 columns
+                val rows = 4
+                val cols = 6
                 val spacing = 6f
                 val brickWidth = (usableWidth - (spacing * (cols - 1))) / cols
-                val brickHeight = 28f
+                val brickHeight = 26f
 
-                val rowColors = listOf(NeonPink, NeonOrange, NeonYellow, NeonGreen, NeonCyan)
+                val rowColors = listOf(NeonPink, NeonOrange, NeonYellow, NeonCyan)
 
                 var id = 0
                 for (r in 0 until rows) {
@@ -37,8 +102,7 @@ object LevelGenerator {
                     for (c in 0 until cols) {
                         val bx = sideMargin + c * (brickWidth + spacing)
                         val by = topMargin + r * (brickHeight + spacing)
-                        // Occasional power-up brick
-                        val isPowerup = (r == 2 && (c == 2 || c == 4)) || (r == 4 && c == 3)
+                        val isPowerup = (r == 1 && (c == 2 || c == 3)) || (r == 3 && c == 4)
                         val type = if (isPowerup) BrickType.POWERUP else BrickType.NORMAL
 
                         bricks.add(
@@ -52,7 +116,7 @@ object LevelGenerator {
                                 maxHits = 1,
                                 baseColor = color,
                                 type = type,
-                                points = (5 - r) * 10
+                                points = (4 - r) * 10
                             )
                         )
                     }
@@ -60,29 +124,23 @@ object LevelGenerator {
             }
 
             2 -> {
-                // Cosmic Invader pattern - 6 rows, 8 columns
-                val rows = 6
-                val cols = 8
+                // Cyber Fortified Mesh - 5 rows, 7 columns
+                val rows = 5
+                val cols = 7
                 val spacing = 6f
                 val brickWidth = (usableWidth - (spacing * (cols - 1))) / cols
-                val brickHeight = 26f
+                val brickHeight = 24f
 
                 var id = 0
                 for (r in 0 until rows) {
                     for (c in 0 until cols) {
-                        // Skip some bricks to form invader shape
-                        if ((r == 0 && (c == 0 || c == 7)) ||
-                            (r == 5 && (c == 1 || c == 2 || c == 5 || c == 6))
-                        ) {
-                            continue
-                        }
+                        if (r == 0 && (c == 0 || c == 6)) continue
 
                         val bx = sideMargin + c * (brickWidth + spacing)
                         val by = topMargin + r * (brickHeight + spacing)
 
-                        // Center bricks are tough 2-hit purple, corners are explosive orange
-                        val isExplosive = (r == 2 && (c == 0 || c == 7)) || (r == 3 && (c == 3 || c == 4))
-                        val isTough = r in 1..2 && c in 2..5
+                        val isExplosive = (r == 2 && (c == 0 || c == 6))
+                        val isTough = r in 1..2 && c in 2..4
 
                         val (type, maxHits, color, points) = when {
                             isExplosive -> Quad(BrickType.EXPLOSIVE, 1, NeonOrange, 30)
@@ -110,8 +168,8 @@ object LevelGenerator {
             }
 
             3 -> {
-                // Diamond Fortress - armored center, explosive perimeter
-                val rows = 7
+                // Singularity Shield - 5 rows, 7 columns
+                val rows = 5
                 val cols = 7
                 val spacing = 6f
                 val brickWidth = (usableWidth - (spacing * (cols - 1))) / cols
@@ -124,7 +182,7 @@ object LevelGenerator {
                 for (r in 0 until rows) {
                     for (c in 0 until cols) {
                         val distFromCenter = kotlin.math.abs(r - midRow) + kotlin.math.abs(c - midCol)
-                        if (distFromCenter > 3) continue // Diamond filter
+                        if (distFromCenter > 3) continue
 
                         val bx = sideMargin + c * (brickWidth + spacing)
                         val by = topMargin + r * (brickHeight + spacing)
@@ -161,11 +219,11 @@ object LevelGenerator {
 
             else -> {
                 // Procedural Higher Levels
-                val rows = (5 + (levelNumber % 3)).coerceAtMost(8)
-                val cols = 8
+                val rows = (4 + (levelNumber % 3)).coerceAtMost(6)
+                val cols = 7
                 val spacing = 6f
                 val brickWidth = (usableWidth - (spacing * (cols - 1))) / cols
-                val brickHeight = 25f
+                val brickHeight = 24f
 
                 val rng = Random(levelNumber * 42L)
                 val palette = listOf(NeonPink, NeonCyan, NeonPurple, NeonGreen, NeonOrange, NeonYellow)
@@ -174,9 +232,6 @@ object LevelGenerator {
                 for (r in 0 until rows) {
                     val rowColor = palette[(r + levelNumber) % palette.size]
                     for (c in 0 until cols) {
-                        // Checker pattern skip in some levels
-                        if (levelNumber % 2 == 0 && (r + c) % 4 == 0) continue
-
                         val bx = sideMargin + c * (brickWidth + spacing)
                         val by = topMargin + r * (brickHeight + spacing)
 

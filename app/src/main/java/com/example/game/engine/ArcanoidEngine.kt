@@ -3,28 +3,36 @@ package com.example.game.engine
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.example.game.audio.HapticSoundHelper
 import com.example.game.level.LevelGenerator
 import com.example.game.model.Ball
+import com.example.game.model.Boss
 import com.example.game.model.Brick
 import com.example.game.model.BrickType
+import com.example.game.model.EnemyProjectile
 import com.example.game.model.FloatingText
 import com.example.game.model.GameStatus
+import com.example.game.model.MechProjectile
 import com.example.game.model.Paddle
 import com.example.game.model.Particle
 import com.example.game.model.PowerUp
 import com.example.game.model.PowerUpType
+import com.example.game.model.Relic
+import com.example.game.model.RelicType
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGold
 import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.NeonOrange
 import com.example.ui.theme.NeonPink
 import com.example.ui.theme.NeonPurple
+import com.example.ui.theme.NeonRed
 import com.example.ui.theme.NeonYellow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,7 +52,6 @@ class ArcanoidEngine(
     private val prefs: SharedPreferences =
         context.getSharedPreferences("arcanoid_prefs", Context.MODE_PRIVATE)
 
-    // Render trigger read by Canvas to redraw each frame without recomposition
     var renderTrigger by mutableLongStateOf(0L)
 
     var width: Float = 1000f
@@ -57,19 +64,54 @@ class ArcanoidEngine(
     val particles = mutableListOf<Particle>()
     val floatingTexts = mutableListOf<FloatingText>()
 
+    // Roguelike & Combat Projectiles
+    val mechProjectiles = mutableListOf<MechProjectile>()
+    val enemyProjectiles = mutableListOf<EnemyProjectile>()
+    var boss by mutableStateOf<Boss?>(null)
+    var bossHp by mutableIntStateOf(35)
+        private set
+    var bossMaxHp by mutableIntStateOf(35)
+        private set
+    var bossName by mutableStateOf("NEXUS-V")
+        private set
+    var isBossActive by mutableStateOf(true)
+        private set
+
+    // Relics acquired during the run
+    val activeRelics = mutableStateListOf<Relic>()
+    var relicChoices by mutableStateOf<List<RelicType>>(emptyList())
+
+    // Score & Run Stats
     var score by mutableIntStateOf(0)
         private set
     var highScore by mutableIntStateOf(prefs.getInt("high_score", 0))
         private set
     var lives by mutableIntStateOf(3)
         private set
+    var maxLives by mutableIntStateOf(3)
+        private set
     var level by mutableIntStateOf(1)
         private set
     var combo by mutableIntStateOf(0)
         private set
 
+    // Shield States
     var bottomShieldActive by mutableStateOf(false)
         private set
+    var quantumShieldActive by mutableStateOf(false)
+        private set
+
+    // Active Skill Cooldowns (Exposed to UI for circular meters)
+    var cannonCooldownMax = 5.0f
+    var cannonCooldownRemaining by mutableFloatStateOf(0f)
+    val canFireCannons: Boolean
+        get() = cannonCooldownRemaining <= 0f && (_gameStatus.value == GameStatus.PLAYING || _gameStatus.value == GameStatus.READY)
+
+    var shieldCooldownMax = 18.0f
+    var shieldCooldownRemaining by mutableFloatStateOf(0f)
+    var shieldActiveTimer by mutableFloatStateOf(0f)
+    val canActivateShield: Boolean
+        get() = shieldCooldownRemaining <= 0f && !quantumShieldActive && (_gameStatus.value == GameStatus.PLAYING || _gameStatus.value == GameStatus.READY)
 
     private var widePaddleTimer: Float = 0f
     private var laserBallTimer: Float = 0f
@@ -87,9 +129,8 @@ class ArcanoidEngine(
         width = newWidth
         height = newHeight
 
-        paddle.y = height - 120f
-        paddle.baseWidth = (width * 0.28f).coerceIn(120f, 220f)
-        paddle.width = if (widePaddleTimer > 0f) paddle.baseWidth * 1.5f else paddle.baseWidth
+        paddle.y = height - 130f
+        updatePaddleBaseWidth()
 
         if (isFirstInit || _gameStatus.value == GameStatus.READY) {
             paddle.x = width / 2f
@@ -100,13 +141,25 @@ class ArcanoidEngine(
         }
     }
 
+    private fun updatePaddleBaseWidth() {
+        var base = (width * 0.28f).coerceIn(130f, 230f)
+        if (hasRelic(RelicType.PADDLE_EXPANSION)) {
+            base *= 1.2f
+        }
+        paddle.baseWidth = base
+        paddle.width = if (widePaddleTimer > 0f) paddle.baseWidth * 1.4f else paddle.baseWidth
+    }
+
+    fun hasRelic(type: RelicType): Boolean {
+        return activeRelics.any { it.type == type }
+    }
+
     fun startOrLaunchBall() {
         if (_gameStatus.value == GameStatus.READY) {
             _gameStatus.value = GameStatus.PLAYING
             if (balls.isEmpty()) {
                 resetBallToPaddle()
             }
-            // Launch ball upwards with initial angle
             val ball = balls.firstOrNull() ?: return
             val launchAngle = (-55f - rng.nextFloat() * 70f) * (PI.toFloat() / 180f)
             val baseSpeed = height * 0.42f
@@ -133,16 +186,25 @@ class ArcanoidEngine(
     fun restartGame() {
         score = 0
         lives = 3
+        maxLives = 3
         level = 1
         combo = 0
+        activeRelics.clear()
+        relicChoices = emptyList()
         widePaddleTimer = 0f
         laserBallTimer = 0f
         slowBallTimer = 0f
         bottomShieldActive = false
+        quantumShieldActive = false
+        cannonCooldownRemaining = 0f
+        shieldCooldownRemaining = 0f
+        shieldActiveTimer = 0f
         powerUps.clear()
         particles.clear()
         floatingTexts.clear()
-        paddle.width = paddle.baseWidth
+        mechProjectiles.clear()
+        enemyProjectiles.clear()
+        updatePaddleBaseWidth()
         paddle.x = width / 2f
         loadLevel(1)
         resetBallToPaddle()
@@ -156,30 +218,101 @@ class ArcanoidEngine(
         laserBallTimer = 0f
         slowBallTimer = 0f
         bottomShieldActive = false
+        quantumShieldActive = false
         powerUps.clear()
         particles.clear()
         floatingTexts.clear()
-        paddle.width = paddle.baseWidth
+        mechProjectiles.clear()
+        enemyProjectiles.clear()
+        updatePaddleBaseWidth()
         paddle.x = width / 2f
         loadLevel(level)
         resetBallToPaddle()
         _gameStatus.value = GameStatus.READY
     }
 
-    /**
-     * Smoothly moves the paddle towards a target X position using exponential damping.
-     * Guarantees zero jitter, zero stuttering, and instant natural responsiveness.
-     */
+    fun triggerRelicSelection() {
+        // Pick 3 random distinct relics not already picked
+        val available = RelicType.values().filter { !hasRelic(it) }
+        val pool = if (available.isNotEmpty()) available else RelicType.values().toList()
+        relicChoices = pool.shuffled().take(3)
+        _gameStatus.value = GameStatus.RELIC_SELECTION
+    }
+
+    fun chooseRelic(type: RelicType) {
+        activeRelics.add(Relic(type, level))
+        soundHelper.onPowerUpCollected()
+
+        // Apply immediate effects
+        when (type) {
+            RelicType.NANOBOT_ARMOR -> {
+                maxLives++
+                lives = (lives + 1).coerceAtMost(maxLives)
+            }
+            RelicType.PADDLE_EXPANSION -> {
+                updatePaddleBaseWidth()
+            }
+            else -> {}
+        }
+
+        relicChoices = emptyList()
+        nextLevel()
+    }
+
+    // --- ACTIVE SKILL: PLASMA CANNONS ---
+    fun fireCannons() {
+        if (!canFireCannons) return
+        soundHelper.onCannonFire()
+
+        val cooldownReduction = if (hasRelic(RelicType.NEURAL_COOLDOWN)) 0.65f else 1.0f
+        cannonCooldownRemaining = cannonCooldownMax * cooldownReduction
+
+        val halfW = paddle.width / 2f
+        val wingOffset = halfW * 0.72f
+        val cannonY = paddle.y - paddle.height / 2f - 4f
+
+        if (hasRelic(RelicType.OVERCHARGED_CANNONS)) {
+            // 4 plasma bolts
+            mechProjectiles.add(MechProjectile(nextEntityId++, paddle.x - wingOffset, cannonY))
+            mechProjectiles.add(MechProjectile(nextEntityId++, paddle.x - wingOffset * 0.45f, cannonY))
+            mechProjectiles.add(MechProjectile(nextEntityId++, paddle.x + wingOffset * 0.45f, cannonY))
+            mechProjectiles.add(MechProjectile(nextEntityId++, paddle.x + wingOffset, cannonY))
+        } else {
+            // Dual plasma bolts
+            mechProjectiles.add(MechProjectile(nextEntityId++, paddle.x - wingOffset, cannonY))
+            mechProjectiles.add(MechProjectile(nextEntityId++, paddle.x + wingOffset, cannonY))
+        }
+
+        // Emit muzzle flash particles
+        spawnExplosionParticles(paddle.x - wingOffset, cannonY, NeonYellow, 4)
+        spawnExplosionParticles(paddle.x + wingOffset, cannonY, NeonYellow, 4)
+    }
+
+    // --- ACTIVE SKILL: QUANTUM SHIELD ---
+    fun activateShield() {
+        if (!canActivateShield) return
+        soundHelper.onPowerUpCollected()
+
+        val duration = if (hasRelic(RelicType.REFLECTIVE_SHIELD)) 8.0f else 5.0f
+        shieldActiveTimer = duration
+        quantumShieldActive = true
+        bottomShieldActive = true
+
+        val cooldownReduction = if (hasRelic(RelicType.NEURAL_COOLDOWN)) 0.65f else 1.0f
+        shieldCooldownRemaining = shieldCooldownMax * cooldownReduction
+
+        spawnExplosionParticles(paddle.x, paddle.y, NeonCyan, 16)
+        addFloatingText("¡ESCUDO ACTIVO!", paddle.x, paddle.y - 30f, NeonCyan)
+    }
+
     fun smoothMovePaddleTowards(targetX: Float, dt: Float) {
         val halfW = paddle.width / 2f
         val clampedTarget = targetX.coerceIn(halfW, width - halfW)
 
-        // Exponential smoothing factor: 22.0 gives immediate, buttery-smooth tracking without overshoot
         val blend = 1f - exp(-22f * dt)
         paddle.x += (clampedTarget - paddle.x) * blend
         paddle.x = paddle.x.coerceIn(halfW, width - halfW)
 
-        // Keep docked ball attached to paddle center
         if (_gameStatus.value == GameStatus.READY && balls.isNotEmpty()) {
             balls[0].x = paddle.x
         }
@@ -197,6 +330,12 @@ class ArcanoidEngine(
     private fun loadLevel(lvl: Int) {
         bricks.clear()
         bricks.addAll(LevelGenerator.generateLevel(lvl, width, height))
+        val newBoss = LevelGenerator.generateBoss(lvl, width, height)
+        boss = newBoss
+        bossHp = newBoss.maxHp
+        bossMaxHp = newBoss.maxHp
+        bossName = newBoss.name
+        isBossActive = true
     }
 
     private fun resetBallToPaddle() {
@@ -216,11 +355,24 @@ class ArcanoidEngine(
     fun update(deltaTime: Float) {
         val dt = deltaTime.coerceIn(0.001f, 0.033f)
 
-        // Update Timers for active powerups
+        // Update Timers for active powerups and skills
+        if (cannonCooldownRemaining > 0f) {
+            cannonCooldownRemaining = (cannonCooldownRemaining - dt).coerceAtLeast(0f)
+        }
+        if (shieldCooldownRemaining > 0f) {
+            shieldCooldownRemaining = (shieldCooldownRemaining - dt).coerceAtLeast(0f)
+        }
+        if (shieldActiveTimer > 0f) {
+            shieldActiveTimer -= dt
+            if (shieldActiveTimer <= 0f) {
+                quantumShieldActive = false
+            }
+        }
+
         if (widePaddleTimer > 0f) {
             widePaddleTimer -= dt
             if (widePaddleTimer <= 0f) {
-                paddle.width = paddle.baseWidth
+                updatePaddleBaseWidth()
             }
         }
         if (laserBallTimer > 0f) {
@@ -239,6 +391,15 @@ class ArcanoidEngine(
             return
         }
 
+        // Update Boss AI Behavior & Projectiles
+        updateBoss(dt)
+
+        // Update Mech Plasma Projectiles
+        updateMechProjectiles(dt)
+
+        // Update Enemy Hostile Projectiles
+        updateEnemyProjectiles(dt)
+
         // Update Balls
         val currentSpeedMultiplier = if (slowBallTimer > 0f) 0.65f else 1.0f
         val ballsIterator = balls.iterator()
@@ -247,17 +408,15 @@ class ArcanoidEngine(
         while (ballsIterator.hasNext()) {
             val ball = ballsIterator.next()
 
-            // Update trail (limit trail size to 6 points for high performance)
             ball.trail.add(0, Pair(ball.x, ball.y))
             if (ball.trail.size > 6) {
                 ball.trail.removeAt(ball.trail.size - 1)
             }
 
-            // Move ball
             ball.x += ball.vx * currentSpeedMultiplier * dt
             ball.y += ball.vy * currentSpeedMultiplier * dt
 
-            // Left & Right Wall Collisions (with position separation)
+            // Wall Collisions
             if (ball.x - ball.radius <= 0f) {
                 ball.x = ball.radius
                 ball.vx = abs(ball.vx)
@@ -270,7 +429,7 @@ class ArcanoidEngine(
                 soundHelper.onPaddleHit()
             }
 
-            // Top Ceiling Collision (with position separation)
+            // Top Ceiling Collision
             if (ball.y - ball.radius <= 0f) {
                 ball.y = ball.radius
                 ball.vy = abs(ball.vy)
@@ -278,15 +437,15 @@ class ArcanoidEngine(
                 soundHelper.onPaddleHit()
             }
 
-            // Bottom Shield / Floor Collision
+            // Bottom Floor Collision
             if (ball.y + ball.radius >= height) {
-                if (bottomShieldActive) {
-                    bottomShieldActive = false
+                if (bottomShieldActive || quantumShieldActive) {
+                    if (!quantumShieldActive) bottomShieldActive = false
                     ball.y = height - ball.radius - 8f
                     ball.vy = -abs(ball.vy)
                     soundHelper.onExplosion()
                     spawnExplosionParticles(width / 2f, height - 10f, NeonPurple, 15)
-                    addFloatingText("¡ESCUDO!", width / 2f, height - 60f, NeonPurple)
+                    addFloatingText("¡ESCUDO REPELENTE!", width / 2f, height - 60f, NeonPurple)
                 } else {
                     ballsToRemove.add(ball)
                 }
@@ -303,10 +462,8 @@ class ArcanoidEngine(
                 ball.x >= paddle.x - halfPaddleW - ball.radius &&
                 ball.x <= paddle.x + halfPaddleW + ball.radius
             ) {
-                // Push ball strictly above paddle to prevent multi-frame sticking
                 ball.y = paddleTop - ball.radius - 1f
 
-                // Angle based on hit location
                 val hitFactor = ((ball.x - paddle.x) / halfPaddleW).coerceIn(-1f, 1f)
                 val maxBounceAngle = 60f * (PI.toFloat() / 180f)
                 val bounceAngle = hitFactor * maxBounceAngle
@@ -318,19 +475,21 @@ class ArcanoidEngine(
                 ball.vx = newSpeed * sin(bounceAngle)
                 ball.vy = -newSpeed * cos(bounceAngle)
 
-                combo = 0 // reset combo on paddle hit
+                combo = 0
                 spawnWallParticles(ball.x, ball.y, NeonCyan)
                 soundHelper.onPaddleHit()
             }
 
-            // Brick Collisions
+            // Collision with Boss
+            checkBossBallCollision(ball)
+
+            // Collision with Bricks
             checkBrickCollisions(ball)
         }
 
-        // Remove fallen balls
         balls.removeAll(ballsToRemove)
 
-        // If no balls remaining, lose a life
+        // Ball loss check
         if (balls.isEmpty()) {
             lives--
             soundHelper.onBallLost()
@@ -354,7 +513,6 @@ class ArcanoidEngine(
             val pu = powerUpIterator.next()
             pu.y += pu.vy * dt
 
-            // Paddle collect power-up
             if (pu.y + pu.size / 2f >= paddleTop &&
                 pu.y - pu.size / 2f <= paddleBottom &&
                 pu.x >= paddle.x - halfPaddleW &&
@@ -368,25 +526,263 @@ class ArcanoidEngine(
                 continue
             }
 
-            // Fall off screen
             if (pu.y - pu.size > height) {
                 powerUpIterator.remove()
             }
         }
 
-        // Update particles & floating texts
         updateParticles(dt)
         updateFloatingTexts(dt)
 
-        // Check if level cleared
-        val remainingBreakable = bricks.count { !it.isDestroyed }
-        if (remainingBreakable == 0 && bricks.isNotEmpty()) {
-            val clearBonus = level * 500
+        // Check if level/boss cleared
+        val currentBoss = boss
+        if (currentBoss != null && currentBoss.isDefeated) {
+            val clearBonus = level * 1000
             score += clearBonus
             checkAndSaveHighScore()
             soundHelper.onLevelCleared()
-            addFloatingText("¡NIVEL LIMPIO! +$clearBonus", width / 2f, height / 2f, NeonGold)
-            _gameStatus.value = GameStatus.LEVEL_CLEARED
+            addFloatingText("¡JEFE ERRADICADO! +$clearBonus", width / 2f, height / 2f, NeonGold)
+            triggerRelicSelection()
+        }
+    }
+
+    private fun updateBoss(dt: Float) {
+        val b = boss ?: return
+        if (b.isDefeated) return
+
+        // Side to side movement
+        b.x += b.vx * dt
+        val halfW = b.width / 2f
+        val minX = halfW + width * 0.04f
+        val maxX = width - halfW - width * 0.04f
+
+        if (b.x <= minX) {
+            b.x = minX
+            b.vx = abs(b.vx)
+        } else if (b.x >= maxX) {
+            b.x = maxX
+            b.vx = -abs(b.vx)
+        }
+
+        // Attack firing
+        b.attackTimer += dt
+        b.eyeGlowPhase += dt * 3.5f
+
+        if (b.attackTimer >= b.attackInterval) {
+            b.attackTimer = 0f
+            // Boss attacks!
+            spawnBossProjectiles(b)
+        }
+    }
+
+    private fun spawnBossProjectiles(b: Boss) {
+        val count = (1 + (level % 3)).coerceIn(1, 3)
+        when (count) {
+            1 -> {
+                enemyProjectiles.add(
+                    EnemyProjectile(
+                        id = nextEntityId++,
+                        x = b.x,
+                        y = b.y + b.height / 2f + 6f,
+                        vx = 0f,
+                        vy = 260f
+                    )
+                )
+            }
+            2 -> {
+                enemyProjectiles.add(
+                    EnemyProjectile(
+                        id = nextEntityId++,
+                        x = b.x - b.width * 0.3f,
+                        y = b.y + b.height / 2f + 6f,
+                        vx = -40f,
+                        vy = 260f
+                    )
+                )
+                enemyProjectiles.add(
+                    EnemyProjectile(
+                        id = nextEntityId++,
+                        x = b.x + b.width * 0.3f,
+                        y = b.y + b.height / 2f + 6f,
+                        vx = 40f,
+                        vy = 260f
+                    )
+                )
+            }
+            else -> {
+                // 3 spread orbs
+                enemyProjectiles.add(
+                    EnemyProjectile(
+                        id = nextEntityId++,
+                        x = b.x,
+                        y = b.y + b.height / 2f + 6f,
+                        vx = 0f,
+                        vy = 270f
+                    )
+                )
+                enemyProjectiles.add(
+                    EnemyProjectile(
+                        id = nextEntityId++,
+                        x = b.x - b.width * 0.35f,
+                        y = b.y + b.height / 2f + 6f,
+                        vx = -70f,
+                        vy = 250f
+                    )
+                )
+                enemyProjectiles.add(
+                    EnemyProjectile(
+                        id = nextEntityId++,
+                        x = b.x + b.width * 0.35f,
+                        y = b.y + b.height / 2f + 6f,
+                        vx = 70f,
+                        vy = 250f
+                    )
+                )
+            }
+        }
+    }
+
+    private fun updateMechProjectiles(dt: Float) {
+        val iterator = mechProjectiles.iterator()
+        val currentBoss = boss
+
+        while (iterator.hasNext()) {
+            val proj = iterator.next()
+            proj.y += proj.vy * dt
+
+            // Off-screen
+            if (proj.y < -20f) {
+                iterator.remove()
+                continue
+            }
+
+            // Hit Boss
+            if (currentBoss != null && !currentBoss.isDefeated) {
+                val halfBW = currentBoss.width / 2f
+                val halfBH = currentBoss.height / 2f
+                if (proj.x >= currentBoss.x - halfBW &&
+                    proj.x <= currentBoss.x + halfBW &&
+                    proj.y >= currentBoss.y - halfBH &&
+                    proj.y <= currentBoss.y + halfBH
+                ) {
+                    damageBoss(proj.damage)
+                    spawnExplosionParticles(proj.x, proj.y, NeonYellow, 5)
+                    iterator.remove()
+                    continue
+                }
+            }
+
+            // Hit Bricks
+            var hitBrick = false
+            for (brick in bricks) {
+                if (brick.isDestroyed) continue
+                if (proj.x >= brick.x && proj.x <= brick.x + brick.width &&
+                    proj.y >= brick.y && proj.y <= brick.y + brick.height
+                ) {
+                    damageBrick(brick, proj.x, proj.y)
+                    spawnExplosionParticles(proj.x, proj.y, NeonCyan, 4)
+                    hitBrick = true
+                    break
+                }
+            }
+            if (hitBrick) {
+                iterator.remove()
+            }
+        }
+    }
+
+    private fun updateEnemyProjectiles(dt: Float) {
+        val iterator = enemyProjectiles.iterator()
+        val paddleTop = paddle.y - paddle.height / 2f
+        val paddleBottom = paddle.y + paddle.height / 2f
+        val halfPaddleW = paddle.width / 2f
+
+        while (iterator.hasNext()) {
+            val ep = iterator.next()
+            ep.x += ep.vx * dt
+            ep.y += ep.vy * dt
+
+            // Off-screen
+            if (ep.y > height + 20f) {
+                iterator.remove()
+                continue
+            }
+
+            // Hit Shield
+            if (quantumShieldActive) {
+                val shieldRadius = paddle.width * 0.65f
+                val dx = ep.x - paddle.x
+                val dy = ep.y - paddle.y
+                if (dx * dx + dy * dy <= shieldRadius * shieldRadius) {
+                    soundHelper.onBrickHit()
+                    spawnExplosionParticles(ep.x, ep.y, NeonCyan, 8)
+                    iterator.remove()
+                    continue
+                }
+            }
+
+            // Hit Player Mech
+            if (ep.y + ep.radius >= paddleTop &&
+                ep.y - ep.radius <= paddleBottom &&
+                ep.x >= paddle.x - halfPaddleW &&
+                ep.x <= paddle.x + halfPaddleW
+            ) {
+                lives--
+                soundHelper.onBallLost()
+                spawnExplosionParticles(ep.x, ep.y, NeonRed, 14)
+                addFloatingText("¡IMPACTO!", paddle.x, paddle.y - 40f, NeonRed)
+                iterator.remove()
+                if (lives <= 0) {
+                    _gameStatus.value = GameStatus.GAME_OVER
+                    checkAndSaveHighScore()
+                }
+            }
+        }
+    }
+
+    private fun checkBossBallCollision(ball: Ball) {
+        val b = boss ?: return
+        if (b.isDefeated) return
+
+        val halfBW = b.width / 2f
+        val halfBH = b.height / 2f
+        val closestX = ball.x.coerceIn(b.x - halfBW, b.x + halfBW)
+        val closestY = ball.y.coerceIn(b.y - halfBH, b.y + halfBH)
+
+        val distX = ball.x - closestX
+        val distY = ball.y - closestY
+
+        if (distX * distX + distY * distY <= ball.radius * ball.radius) {
+            // Reflect ball downwards
+            ball.vy = abs(ball.vy)
+            ball.y = b.y + halfBH + ball.radius + 1f
+
+            val damage = if (hasRelic(RelicType.HEAVY_BALL_FUSION)) 6 else 3
+            damageBoss(damage)
+            spawnExplosionParticles(ball.x, ball.y, b.color, 12)
+        }
+    }
+
+    private fun damageBoss(dmg: Int) {
+        val b = boss ?: return
+        if (b.isDefeated) return
+
+        val newHp = (bossHp - dmg).coerceAtLeast(0)
+        bossHp = newHp
+        b.currentHp = newHp
+        soundHelper.onBossDamaged()
+
+        val pointsEarned = dmg * 50
+        score += pointsEarned
+        checkAndSaveHighScore()
+        addFloatingText("-$dmg", b.x + (rng.nextFloat() * 40f - 20f), b.y, NeonGold)
+
+        if (bossHp <= 0) {
+            b.isDefeated = true
+            isBossActive = false
+            soundHelper.onBossDefeated()
+            spawnExplosionParticles(b.x, b.y, NeonRed, 35)
+            spawnExplosionParticles(b.x, b.y, NeonYellow, 25)
         }
     }
 
@@ -402,7 +798,6 @@ class ArcanoidEngine(
             val distSq = distX * distX + distY * distY
 
             if (distSq <= ball.radius * ball.radius) {
-                // Collision happened with clean separation
                 if (!ball.isPiercing) {
                     val overlapX = (ball.radius + brick.width / 2f) - abs(ball.x - (brick.x + brick.width / 2f))
                     val overlapY = (ball.radius + brick.height / 2f) - abs(ball.y - (brick.y + brick.height / 2f))
@@ -423,7 +818,8 @@ class ArcanoidEngine(
     }
 
     private fun damageBrick(brick: Brick, hitX: Float, hitY: Float) {
-        brick.hitsRemaining--
+        val dmg = if (hasRelic(RelicType.HEAVY_BALL_FUSION)) 2 else 1
+        brick.hitsRemaining -= dmg
         soundHelper.onBrickHit()
 
         if (brick.hitsRemaining <= 0) {
@@ -438,18 +834,15 @@ class ArcanoidEngine(
             addFloatingText(text, brick.x + brick.width / 2f, brick.y, brick.baseColor)
             spawnExplosionParticles(brick.x + brick.width / 2f, brick.y + brick.height / 2f, brick.baseColor, 10)
 
-            // Trigger explosive brick chained damage
             if (brick.type == BrickType.EXPLOSIVE) {
                 soundHelper.onExplosion()
                 triggerExplosionAround(brick)
             }
 
-            // Power-up chance
             if (brick.type == BrickType.POWERUP || rng.nextFloat() < 0.18f) {
                 spawnPowerUp(brick.x + brick.width / 2f, brick.y + brick.height / 2f)
             }
         } else {
-            // Hit tough brick
             spawnWallParticles(hitX, hitY, brick.baseColor)
         }
     }
@@ -490,7 +883,7 @@ class ArcanoidEngine(
         when (type) {
             PowerUpType.WIDE_PADDLE -> {
                 widePaddleTimer = 15f
-                paddle.width = paddle.baseWidth * 1.5f
+                paddle.width = paddle.baseWidth * 1.4f
             }
             PowerUpType.MULTI_BALL -> {
                 if (balls.isNotEmpty()) {
@@ -521,7 +914,7 @@ class ArcanoidEngine(
                 balls.forEach { it.isPiercing = true }
             }
             PowerUpType.EXTRA_LIFE -> {
-                if (lives < 5) lives++
+                if (lives < maxLives + 2) lives++
             }
             PowerUpType.BOTTOM_SHIELD -> {
                 bottomShieldActive = true
@@ -530,9 +923,8 @@ class ArcanoidEngine(
     }
 
     private fun spawnExplosionParticles(x: Float, y: Float, color: Color, count: Int) {
-        // Enforce maximum particle pool to avoid GC
-        if (particles.size > 40) return
-        val clampedCount = count.coerceAtMost(12)
+        if (particles.size > 50) return
+        val clampedCount = count.coerceAtMost(16)
         for (i in 0 until clampedCount) {
             val angle = rng.nextFloat() * 2f * PI.toFloat()
             val speed = rng.nextFloat() * 200f + 50f
@@ -552,7 +944,7 @@ class ArcanoidEngine(
     }
 
     private fun spawnWallParticles(x: Float, y: Float, color: Color) {
-        if (particles.size > 40) return
+        if (particles.size > 50) return
         for (i in 0 until 4) {
             val angle = rng.nextFloat() * 2f * PI.toFloat()
             val speed = rng.nextFloat() * 100f + 25f
@@ -572,7 +964,7 @@ class ArcanoidEngine(
     }
 
     private fun addFloatingText(text: String, x: Float, y: Float, color: Color) {
-        if (floatingTexts.size > 4) floatingTexts.removeAt(0)
+        if (floatingTexts.size > 5) floatingTexts.removeAt(0)
         floatingTexts.add(
             FloatingText(
                 id = nextEntityId++,

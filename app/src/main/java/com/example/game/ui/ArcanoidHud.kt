@@ -20,14 +20,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Token
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -40,7 +41,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.game.engine.ArcanoidEngine
@@ -52,8 +52,11 @@ import com.example.ui.theme.ArcadeSurface
 import com.example.ui.theme.ArcadeTextSecondary
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGold
+import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.NeonOrange
 import com.example.ui.theme.NeonPink
+import com.example.ui.theme.NeonPurple
+import com.example.ui.theme.NeonRed
 import com.example.ui.theme.NeonYellow
 import kotlin.math.roundToInt
 
@@ -68,19 +71,20 @@ fun ArcanoidHud(
     val tiltFactor by accelerometerController.currentTiltFactor.collectAsState()
     val tiltDegrees by accelerometerController.tiltDegrees.collectAsState()
     val gameStatus by engine.gameStatus.collectAsState()
+    val boss = engine.boss
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
-        // Top Row: Level, Scores, Lives & Action Buttons
+        // Top Row: Level / Sector, Score, Lives & Action Buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Level Badge
+            // Level / Sector Badge
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -89,20 +93,20 @@ fun ArcanoidHud(
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "NVL ${engine.level}",
+                    text = "SECTOR ${engine.level}",
                     color = NeonCyan,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Black,
                     fontFamily = FontFamily.Monospace
                 )
             }
 
-            // Score Display
+            // Score & High Score
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "${engine.score}".padStart(5, '0'),
+                    text = "${engine.score}".padStart(6, '0'),
                     color = Color.White,
-                    fontSize = 22.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp
@@ -110,29 +114,29 @@ fun ArcanoidHud(
                 Text(
                     text = "RÉCORD: ${engine.highScore}",
                     color = NeonGold,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace
                 )
             }
 
-            // Lives indicators
+            // Mech Health / Shields
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                for (i in 1..5) {
+                for (i in 1..engine.maxLives.coerceAtMost(6)) {
                     val active = i <= engine.lives
                     Icon(
-                        imageVector = Icons.Default.Favorite,
-                        contentDescription = "Vida $i",
-                        tint = if (active) NeonPink else Color(0x33FF007F),
-                        modifier = Modifier.size(18.dp)
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = "Escudo $i",
+                        tint = if (active) NeonCyan else Color(0x3300F0FF),
+                        modifier = Modifier.size(17.dp)
                     )
                 }
             }
 
-            // Action Buttons (Pause & Settings)
+            // Pause & Settings
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = {
@@ -143,83 +147,124 @@ fun ArcanoidHud(
                         }
                     },
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(36.dp)
                         .testTag("pause_resume_button")
                 ) {
                     Icon(
                         imageVector = if (gameStatus == GameStatus.PAUSED) Icons.Default.PlayArrow else Icons.Default.Pause,
                         contentDescription = "Pausar o reanudar",
                         tint = NeonCyan,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
                 IconButton(
                     onClick = onOpenSettings,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(36.dp)
                         .testTag("settings_button")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = "Ajustes",
                         tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        // Boss Health Bar (When boss is active)
+        if (engine.isBossActive) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1B0B24))
+                    .border(1.dp, NeonRed.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "⚠ IA CORRUPTA: ${engine.bossName}",
+                        color = NeonRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "${engine.bossHp}/${engine.bossMaxHp} HP",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Spacer(modifier = Modifier.height(3.dp))
+                LinearProgressIndicator(
+                    progress = { (engine.bossHp.toFloat() / engine.bossMaxHp.toFloat()).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = NeonRed,
+                    trackColor = Color(0xFF3B1225)
+                )
+            }
+        }
 
-        // Secondary Row: Accelerometer Tilt Indicator & Combo
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Secondary Row: Accelerometer Sensor Meter, Relics Count & Combo Tag
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Spirit Level Bubble Meter for Accelerometer
+            // Accelerometer spirit level
             if (controlMode != ControlMode.TOUCH && accelerometerController.isSensorAvailable) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(ArcadeSurface.copy(alpha = 0.85f))
-                        .border(1.dp, ArcadeBorder, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .border(1.dp, ArcadeBorder, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = "Giro: ${(tiltDegrees).roundToInt()}°",
+                        text = "${(tiltDegrees).roundToInt()}°",
                         color = ArcadeTextSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(end = 6.dp)
+                        modifier = Modifier.padding(end = 5.dp)
                     )
 
-                    // Horizontal tube meter
                     Box(
                         modifier = Modifier
-                            .width(60.dp)
-                            .height(10.dp)
-                            .clip(RoundedCornerShape(5.dp))
+                            .width(48.dp)
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xFF0F0B24))
-                            .border(0.8.dp, NeonCyan.copy(alpha = 0.5f), RoundedCornerShape(5.dp)),
+                            .border(0.6.dp, NeonCyan.copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        // Center crosshair line
                         Box(
                             modifier = Modifier
                                 .width(1.dp)
-                                .height(10.dp)
+                                .height(8.dp)
                                 .background(Color.White.copy(alpha = 0.4f))
                         )
 
-                        // Glowing bubble moving left/right (-24dp to +24dp offset)
-                        val bubbleOffset = (tiltFactor * 22f).coerceIn(-24f, 24f).dp
+                        val bubbleOffset = (tiltFactor * 18f).coerceIn(-18f, 18f).dp
                         Box(
                             modifier = Modifier
                                 .offset(x = bubbleOffset)
-                                .size(8.dp)
+                                .size(6.dp)
                                 .clip(CircleShape)
                                 .background(
                                     Brush.radialGradient(
@@ -229,34 +274,53 @@ fun ArcanoidHud(
                         )
                     }
 
-                    // Quick Calibrate button
                     Box(
                         modifier = Modifier
-                            .padding(start = 8.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .padding(start = 6.dp)
+                            .clip(RoundedCornerShape(5.dp))
                             .background(Color(0xFF231A45))
                             .clickable { accelerometerController.calibrateNeutral() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                             .testTag("quick_calibrate_button")
                     ) {
                         Text(
                             text = "Calibrar",
                             color = NeonYellow,
-                            fontSize = 10.sp,
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
-            } else {
-                Text(
-                    text = "Control: ${controlMode.displayName}",
-                    color = ArcadeTextSecondary,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
             }
 
-            // Combo notification tag
+            // Relics Count Chip
+            if (engine.activeRelics.isNotEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(ArcadeSurface)
+                        .border(1.dp, NeonPurple, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Token,
+                        contentDescription = "Reliquias",
+                        tint = NeonPurple,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "${engine.activeRelics.size} Reliquias",
+                        color = NeonPurple,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            // Combo Notification
             AnimatedVisibility(
                 visible = engine.combo > 1,
                 enter = fadeIn(),
@@ -270,12 +334,12 @@ fun ArcanoidHud(
                                 listOf(NeonPink, NeonOrange)
                             )
                         )
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
                     Text(
                         text = "COMBO x${engine.combo}!",
                         color = Color.White,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         fontFamily = FontFamily.Monospace
                     )

@@ -19,17 +19,24 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import com.example.game.engine.ArcanoidEngine
 import com.example.game.model.Ball
+import com.example.game.model.Boss
 import com.example.game.model.Brick
 import com.example.game.model.BrickType
 import com.example.game.model.ControlMode
+import com.example.game.model.EnemyProjectile
+import com.example.game.model.MechProjectile
 import com.example.game.model.PowerUp
 import com.example.ui.theme.ArcadeBackground
 import com.example.ui.theme.ArcadeGridLine
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGold
+import com.example.ui.theme.NeonOrange
 import com.example.ui.theme.NeonPink
 import com.example.ui.theme.NeonPurple
+import com.example.ui.theme.NeonRed
 import com.example.ui.theme.NeonYellow
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun ArcanoidCanvas(
@@ -37,11 +44,14 @@ fun ArcanoidCanvas(
     controlMode: ControlMode,
     modifier: Modifier = Modifier
 ) {
-    // Pre-allocated reusable graphics objects to ensure 0 GC pressure during 60/120 FPS rendering
+    // Pre-allocated reusable graphics objects to ensure 0 GC pressure
     val brickCorner = remember { CornerRadius(6f, 6f) }
     val brickGlowCorner = remember { CornerRadius(8f, 8f) }
     val borderStroke = remember { Stroke(width = 1.5f) }
+    val thickStroke = remember { Stroke(width = 2.5f) }
     val diamondPath = remember { Path() }
+    val mechPath = remember { Path() }
+    val bossPath = remember { Path() }
 
     val nativeTextPaint = remember {
         android.graphics.Paint().apply {
@@ -55,7 +65,7 @@ fun ArcanoidCanvas(
 
     val floatingPaint = remember {
         android.graphics.Paint().apply {
-            textSize = 30f
+            textSize = 28f
             isFakeBoldText = true
             textAlign = android.graphics.Paint.Align.CENTER
             isAntiAlias = true
@@ -80,24 +90,22 @@ fun ArcanoidCanvas(
                 }
             }
     ) {
-        // CRITICAL FOR SMOOTH 60/120 FPS:
-        // Reading engine.renderTrigger INSIDE the DrawScope registers this draw layer with Compose.
-        // Whenever engine.renderTrigger updates, ONLY this draw layer invalidates without triggering recomposition!
+        // Read renderTrigger for Compose draw invalidation without recomposition
         val frameTick = engine.renderTrigger
 
         val w = size.width
         val h = size.height
         engine.setDimensions(w, h)
 
-        // 1. Draw Grid Background
+        // 1. Arcade Cyberpunk Grid Background
         drawArcadeBackground(w, h)
 
-        // 2. Draw Bottom Shield Laser
-        if (engine.bottomShieldActive) {
+        // 2. Bottom Laser Shield
+        if (engine.bottomShieldActive || engine.quantumShieldActive) {
             drawBottomShield(w, h)
         }
 
-        // 3. Draw Bricks (optimized, 0 allocations)
+        // 3. Bricks
         for (i in engine.bricks.indices) {
             val brick = engine.bricks[i]
             if (!brick.isDestroyed) {
@@ -105,12 +113,30 @@ fun ArcanoidCanvas(
             }
         }
 
-        // 4. Draw Falling Power-ups
+        // 4. Corrupted AI Boss
+        val currentBoss = engine.boss
+        if (currentBoss != null && !currentBoss.isDefeated) {
+            drawCorruptedBoss(currentBoss, bossPath, borderStroke)
+        }
+
+        // 5. Mech Plasma Bolts (Player Projectiles)
+        for (i in engine.mechProjectiles.indices) {
+            val proj = engine.mechProjectiles[i]
+            drawMechPlasmaBolt(proj)
+        }
+
+        // 6. Boss Hostile Energy Orbs
+        for (i in engine.enemyProjectiles.indices) {
+            val ep = engine.enemyProjectiles[i]
+            drawEnemyEnergyOrb(ep)
+        }
+
+        // 7. Falling Power-ups
         for (i in engine.powerUps.indices) {
             drawPowerUp(engine.powerUps[i], borderStroke, nativeTextPaint)
         }
 
-        // 5. Draw Particles
+        // 8. Particles
         for (i in engine.particles.indices) {
             val p = engine.particles[i]
             drawCircle(
@@ -120,15 +146,15 @@ fun ArcanoidCanvas(
             )
         }
 
-        // 6. Draw Paddle
-        drawNeonPaddle(engine)
+        // 9. Armored Cyberpunk Mech (Replacing plain paddle)
+        drawCyberpunkMech(engine, mechPath, borderStroke, thickStroke)
 
-        // 7. Draw Balls and Trails
+        // 10. Energy Balls & Glowing Trails
         for (i in engine.balls.indices) {
             drawNeonBall(engine.balls[i])
         }
 
-        // 8. Draw Floating Texts
+        // 11. Floating Score / Status Texts
         drawFloatingTexts(engine, floatingPaint)
     }
 }
@@ -136,7 +162,6 @@ fun ArcanoidCanvas(
 private fun DrawScope.drawArcadeBackground(w: Float, h: Float) {
     drawRect(color = ArcadeBackground, size = Size(w, h))
 
-    // Vertical grid lines
     val verticalSpacing = w / 8f
     for (i in 1 until 8) {
         val x = i * verticalSpacing
@@ -148,7 +173,6 @@ private fun DrawScope.drawArcadeBackground(w: Float, h: Float) {
         )
     }
 
-    // Horizontal grid lines
     val horizontalSpacing = h / 16f
     for (j in 1 until 16) {
         val y = j * horizontalSpacing
@@ -163,7 +187,6 @@ private fun DrawScope.drawArcadeBackground(w: Float, h: Float) {
 
 private fun DrawScope.drawBottomShield(w: Float, h: Float) {
     val laserY = h - 6f
-    // Laser glow rect
     drawRect(
         color = NeonPurple.copy(alpha = 0.35f),
         topLeft = Offset(0f, laserY - 10f),
@@ -183,6 +206,263 @@ private fun DrawScope.drawBottomShield(w: Float, h: Float) {
     )
 }
 
+/**
+ * Renders the Corrupted AI Boss with menacing robotic hull, cyclops eye and energy arcs
+ */
+private fun DrawScope.drawCorruptedBoss(
+    boss: Boss,
+    path: Path,
+    stroke: Stroke
+) {
+    val cx = boss.x
+    val cy = boss.y
+    val halfW = boss.width / 2f
+    val halfH = boss.height / 2f
+
+    // Outer ominous glow
+    drawRoundRect(
+        color = boss.color.copy(alpha = 0.22f),
+        topLeft = Offset(cx - halfW - 6f, cy - halfH - 6f),
+        size = Size(boss.width + 12f, boss.height + 12f),
+        cornerRadius = CornerRadius(12f, 12f)
+    )
+
+    // Boss Main Chassis Path
+    path.reset()
+    path.moveTo(cx - halfW, cy - halfH * 0.4f)
+    path.lineTo(cx - halfW * 0.7f, cy - halfH)
+    path.lineTo(cx + halfW * 0.7f, cy - halfH)
+    path.lineTo(cx + halfW, cy - halfH * 0.4f)
+    path.lineTo(cx + halfW * 0.85f, cy + halfH)
+    path.lineTo(cx - halfW * 0.85f, cy + halfH)
+    path.close()
+
+    // Chassis body
+    drawPath(path, color = Color(0xFF1A0A26))
+    drawPath(path, color = boss.color, style = stroke)
+
+    // Side Cannon Pods
+    drawRect(
+        color = boss.color,
+        topLeft = Offset(cx - halfW - 2f, cy - 6f),
+        size = Size(8f, 16f)
+    )
+    drawRect(
+        color = boss.color,
+        topLeft = Offset(cx + halfW - 6f, cy - 6f),
+        size = Size(8f, 16f)
+    )
+
+    // Cyclops Central Eye
+    val eyeRadius = 9f
+    drawCircle(
+        color = Color(0xFF0F051D),
+        radius = eyeRadius + 3f,
+        center = Offset(cx, cy)
+    )
+    val eyePulse = (sin(boss.eyeGlowPhase) * 0.3f + 0.7f).coerceIn(0.4f, 1f)
+    drawCircle(
+        color = boss.color.copy(alpha = eyePulse),
+        radius = eyeRadius,
+        center = Offset(cx, cy)
+    )
+    drawCircle(
+        color = Color.White,
+        radius = 3.5f,
+        center = Offset(cx, cy)
+    )
+}
+
+/**
+ * Renders the Epic Cyberpunk Combat Mech (replacing the plain bar)
+ */
+private fun DrawScope.drawCyberpunkMech(
+    engine: ArcanoidEngine,
+    mechPath: Path,
+    borderStroke: Stroke,
+    thickStroke: Stroke
+) {
+    val paddle = engine.paddle
+    val cx = paddle.x
+    val cy = paddle.y
+    val halfW = paddle.width / 2f
+    val halfH = paddle.height / 2f
+
+    // 1. Quantum Shield Dome when active
+    if (engine.quantumShieldActive) {
+        val shieldRadius = paddle.width * 0.62f
+        drawCircle(
+            color = NeonCyan.copy(alpha = 0.22f),
+            radius = shieldRadius,
+            center = Offset(cx, cy)
+        )
+        drawCircle(
+            color = NeonCyan,
+            radius = shieldRadius,
+            center = Offset(cx, cy),
+            style = thickStroke
+        )
+        drawCircle(
+            color = Color.White.copy(alpha = 0.8f),
+            radius = shieldRadius * 0.95f,
+            center = Offset(cx, cy),
+            style = borderStroke
+        )
+    }
+
+    // 2. Thruster Flame Particles underneath
+    val thrusterY = cy + halfH
+    val wingOffset = halfW * 0.65f
+    // Left thruster flame
+    drawCircle(
+        color = NeonOrange,
+        radius = 5f,
+        center = Offset(cx - wingOffset, thrusterY + 4f)
+    )
+    drawCircle(
+        color = NeonYellow,
+        radius = 2.5f,
+        center = Offset(cx - wingOffset, thrusterY + 2f)
+    )
+    // Right thruster flame
+    drawCircle(
+        color = NeonOrange,
+        radius = 5f,
+        center = Offset(cx + wingOffset, thrusterY + 4f)
+    )
+    drawCircle(
+        color = NeonYellow,
+        radius = 2.5f,
+        center = Offset(cx + wingOffset, thrusterY + 2f)
+    )
+
+    // 3. Armored Swept Wings Geometry
+    mechPath.reset()
+    // Front center nose
+    mechPath.moveTo(cx, cy - halfH * 1.15f)
+    // Upper right wing edge
+    mechPath.lineTo(cx + halfW * 0.6f, cy - halfH * 0.6f)
+    // Right cannon mount tip
+    mechPath.lineTo(cx + halfW, cy - halfH * 0.2f)
+    // Right wing wingtip
+    mechPath.lineTo(cx + halfW * 0.9f, cy + halfH)
+    // Bottom inner recess
+    mechPath.lineTo(cx + halfW * 0.35f, cy + halfH * 0.7f)
+    mechPath.lineTo(cx, cy + halfH * 0.9f)
+    mechPath.lineTo(cx - halfW * 0.35f, cy + halfH * 0.7f)
+    // Left wing wingtip
+    mechPath.lineTo(cx - halfW * 0.9f, cy + halfH)
+    // Left cannon mount tip
+    mechPath.lineTo(cx - halfW, cy - halfH * 0.2f)
+    // Upper left wing edge
+    mechPath.lineTo(cx - halfW * 0.6f, cy - halfH * 0.6f)
+    mechPath.close()
+
+    // Outer Aura Glow
+    drawRoundRect(
+        color = NeonCyan.copy(alpha = 0.25f),
+        topLeft = Offset(cx - halfW - 4f, cy - halfH - 4f),
+        size = Size(paddle.width + 8f, paddle.height + 8f),
+        cornerRadius = CornerRadius(halfH, halfH)
+    )
+
+    // Dark Titanium Chassis
+    drawPath(mechPath, color = Color(0xFF0F172A))
+    // Armor Border
+    drawPath(mechPath, color = NeonCyan, style = borderStroke)
+
+    // 4. Dual Plasma Cannon Barrels
+    val cannonW = 6f
+    val cannonH = 14f
+    drawRoundRect(
+        color = Color(0xFF334155),
+        topLeft = Offset(cx - wingOffset - cannonW / 2f, cy - halfH - 4f),
+        size = Size(cannonW, cannonH),
+        cornerRadius = CornerRadius(2f, 2f)
+    )
+    drawRoundRect(
+        color = NeonYellow,
+        topLeft = Offset(cx - wingOffset - cannonW / 2f + 1f, cy - halfH - 4f),
+        size = Size(cannonW - 2f, 4f),
+        cornerRadius = CornerRadius(1f, 1f)
+    )
+
+    drawRoundRect(
+        color = Color(0xFF334155),
+        topLeft = Offset(cx + wingOffset - cannonW / 2f, cy - halfH - 4f),
+        size = Size(cannonW, cannonH),
+        cornerRadius = CornerRadius(2f, 2f)
+    )
+    drawRoundRect(
+        color = NeonYellow,
+        topLeft = Offset(cx + wingOffset - cannonW / 2f + 1f, cy - halfH - 4f),
+        size = Size(cannonW - 2f, 4f),
+        cornerRadius = CornerRadius(1f, 1f)
+    )
+
+    // 5. Central Fusion Core
+    drawCircle(
+        color = Color(0xFF1E1035),
+        radius = 7f,
+        center = Offset(cx, cy)
+    )
+    drawCircle(
+        color = NeonCyan,
+        radius = 5f,
+        center = Offset(cx, cy)
+    )
+    drawCircle(
+        color = Color.White,
+        radius = 2.5f,
+        center = Offset(cx, cy)
+    )
+}
+
+/**
+ * Player Plasma Cannon Bolt
+ */
+private fun DrawScope.drawMechPlasmaBolt(proj: MechProjectile) {
+    val boltLength = 16f
+    // Glow
+    drawLine(
+        color = NeonYellow.copy(alpha = 0.35f),
+        start = Offset(proj.x, proj.y),
+        end = Offset(proj.x, proj.y + boltLength + 4f),
+        strokeWidth = 6f
+    )
+    // Core beam
+    drawLine(
+        color = Color.White,
+        start = Offset(proj.x, proj.y),
+        end = Offset(proj.x, proj.y + boltLength),
+        strokeWidth = 2.5f
+    )
+}
+
+/**
+ * Boss Hostile Energy Orb
+ */
+private fun DrawScope.drawEnemyEnergyOrb(ep: EnemyProjectile) {
+    // Outer red glow
+    drawCircle(
+        color = ep.color.copy(alpha = 0.3f),
+        radius = ep.radius * 1.7f,
+        center = Offset(ep.x, ep.y)
+    )
+    // Energy orb body
+    drawCircle(
+        color = ep.color,
+        radius = ep.radius,
+        center = Offset(ep.x, ep.y)
+    )
+    // White-hot core
+    drawCircle(
+        color = Color.White,
+        radius = ep.radius * 0.45f,
+        center = Offset(ep.x, ep.y)
+    )
+}
+
 private fun DrawScope.drawNeonBrick(
     brick: Brick,
     corner: CornerRadius,
@@ -192,7 +472,6 @@ private fun DrawScope.drawNeonBrick(
 ) {
     val glowAlpha = brick.currentGlowAlpha
 
-    // Outer glow
     drawRoundRect(
         color = brick.baseColor.copy(alpha = 0.22f * glowAlpha),
         topLeft = Offset(brick.x - 2f, brick.y - 2f),
@@ -200,7 +479,6 @@ private fun DrawScope.drawNeonBrick(
         cornerRadius = glowCorner
     )
 
-    // Brick Base Body
     drawRoundRect(
         color = brick.baseColor,
         topLeft = Offset(brick.x, brick.y),
@@ -208,7 +486,6 @@ private fun DrawScope.drawNeonBrick(
         cornerRadius = corner
     )
 
-    // Top surface shine
     drawLine(
         color = Color.White.copy(alpha = 0.6f),
         start = Offset(brick.x + 4f, brick.y + 3f),
@@ -216,7 +493,6 @@ private fun DrawScope.drawNeonBrick(
         strokeWidth = 1.5f
     )
 
-    // Bright border
     drawRoundRect(
         color = Color.White.copy(alpha = 0.5f),
         topLeft = Offset(brick.x, brick.y),
@@ -225,7 +501,6 @@ private fun DrawScope.drawNeonBrick(
         style = borderStroke
     )
 
-    // Special indicators
     when (brick.type) {
         BrickType.EXPLOSIVE -> {
             val cx = brick.x + brick.width / 2f
@@ -264,7 +539,6 @@ private fun DrawScope.drawPowerUp(
     val topLeft = Offset(pu.x - width / 2f, pu.y - height / 2f)
     val pillCorner = CornerRadius(height / 2f, height / 2f)
 
-    // Outer Glow
     drawRoundRect(
         color = pu.type.color.copy(alpha = 0.3f),
         topLeft = Offset(topLeft.x - 3f, topLeft.y - 3f),
@@ -272,7 +546,6 @@ private fun DrawScope.drawPowerUp(
         cornerRadius = CornerRadius((height + 6f) / 2f, (height + 6f) / 2f)
     )
 
-    // Capsule Body
     drawRoundRect(
         color = pu.type.color,
         topLeft = topLeft,
@@ -280,7 +553,6 @@ private fun DrawScope.drawPowerUp(
         cornerRadius = pillCorner
     )
 
-    // Border
     drawRoundRect(
         color = Color.White,
         topLeft = topLeft,
@@ -289,53 +561,12 @@ private fun DrawScope.drawPowerUp(
         style = borderStroke
     )
 
-    // Draw Icon text using pre-allocated paint
     drawContext.canvas.nativeCanvas.apply {
         drawText(pu.type.icon, pu.x, pu.y + 8f, textPaint)
     }
 }
 
-private fun DrawScope.drawNeonPaddle(engine: ArcanoidEngine) {
-    val paddle = engine.paddle
-    val halfW = paddle.width / 2f
-    val halfH = paddle.height / 2f
-    val topLeft = Offset(paddle.x - halfW, paddle.y - halfH)
-    val corner = CornerRadius(halfH, halfH)
-
-    // Outer Aura Glow
-    drawRoundRect(
-        color = NeonCyan.copy(alpha = 0.25f),
-        topLeft = Offset(topLeft.x - 4f, topLeft.y - 4f),
-        size = Size(paddle.width + 8f, paddle.height + 8f),
-        cornerRadius = CornerRadius(halfH + 4f, halfH + 4f)
-    )
-
-    // Paddle Body
-    drawRoundRect(
-        color = NeonCyan,
-        topLeft = topLeft,
-        size = Size(paddle.width, paddle.height),
-        cornerRadius = corner
-    )
-
-    // Inner Neon Core
-    drawRoundRect(
-        color = Color.White,
-        topLeft = Offset(paddle.x - halfW + 4f, paddle.y - halfH + 3f),
-        size = Size(paddle.width - 8f, paddle.height - 6f),
-        cornerRadius = CornerRadius(halfH - 3f, halfH - 3f)
-    )
-
-    // Center directional pip
-    drawCircle(
-        color = NeonPurple,
-        radius = 3.5f,
-        center = Offset(paddle.x, paddle.y)
-    )
-}
-
 private fun DrawScope.drawNeonBall(ball: Ball) {
-    // 1. Comet trail
     val trailSize = ball.trail.size
     val trailColor = if (ball.isPiercing) NeonYellow else NeonPink
     for (i in 0 until trailSize) {
@@ -348,7 +579,6 @@ private fun DrawScope.drawNeonBall(ball: Ball) {
         )
     }
 
-    // 2. Halo Glow
     val haloColor = if (ball.isPiercing) NeonYellow else NeonCyan
     drawCircle(
         color = haloColor.copy(alpha = 0.25f),
@@ -356,14 +586,12 @@ private fun DrawScope.drawNeonBall(ball: Ball) {
         center = Offset(ball.x, ball.y)
     )
 
-    // 3. Ball Core
     drawCircle(
         color = haloColor,
         radius = ball.radius,
         center = Offset(ball.x, ball.y)
     )
 
-    // Center shine
     drawCircle(
         color = Color.White,
         radius = ball.radius * 0.45f,
